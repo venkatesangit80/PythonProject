@@ -117,4 +117,4 @@ curl -X POST http://localhost:8000/chat \
 
 ## 🧑‍💻 Author
 
-Developed by [Your Name] – rule-based AI enthusiast and full-stack dev.
+Developed by Venkatesan Subramanian – rule-based AI enthusiast and full-stack dev.
