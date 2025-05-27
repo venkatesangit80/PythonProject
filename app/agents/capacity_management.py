@@ -5,7 +5,7 @@ try:
 except ImportError:
     psutil = None
 
-def server_health(prompt: str) -> str:
+async def server_health(prompt: str) -> str:
     """
     Simulates a server health check. Returns CPU and memory usage.
     If psutil is not available, returns a default message.

@@ -1,6 +1,6 @@
 # app/agents/support.py
 
-def help(prompt: str) -> str:
+async def help(prompt: str) -> str:
     """
     Provides help or usage guidance to the user.
     """

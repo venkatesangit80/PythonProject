@@ -1,71 +1,108 @@
-# app/main.py
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Dict, Any
+import asyncio
 
-# Import agent modules
-from app.agents import capacity_management, support
 from app.filters import content_check
+from app.agents import support, capacity_management
+from app.templates import TEMPLATES
 
-# Initialize FastAPI app
-app = FastAPI(title="Agentic Chatbot Backend")
+app = FastAPI(title="Guided Agentic Chatbot Backend")
 
-# Enable CORS for development
+# CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, replace with your frontend URL
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic models for request/response
-class MessageIn(BaseModel):
-    message: str
-
-class MessageOut(BaseModel):
-    response: str
-    agent: str
-
-# Agent registry (factory style)
+# Agent routing map for free chat mode
 AGENT_MAP = {
     "server health": capacity_management.server_health,
     "help": support.help,
 }
-
 DEFAULT_AGENT = support.default_response
 
-@app.post("/chat", response_model=MessageOut)
-async def chat_endpoint(msg: MessageIn):
-    user_msg = msg.message.strip()
-    user_msg_lower = user_msg.lower()
+# -----------------------------
+# Models for guided agentic mode
+# -----------------------------
 
-    # Step 1: Content filtering
-    if content_check.contains_profanity(user_msg):
+class TemplateExecutionRequest(BaseModel):
+    template_id: str
+    params: Dict[str, Any]
+
+# -----------------------------
+# Chat Mode: Freeform Routing
+# -----------------------------
+
+@app.post("/chat")
+async def chat_fallback(message: str):
+    if content_check.contains_profanity(message):
         return {
             "response": "⚠️ Inappropriate language detected. Please use respectful language.",
             "agent": "moderation"
         }
-    if content_check.is_spam(user_msg):
+    if content_check.is_spam(message):
         return {
             "response": "⚠️ Your message was flagged as spam. Please rephrase it.",
             "agent": "moderation"
         }
 
-    # Step 2: Agent routing (based on trigger word in message)
-    chosen_trigger = None
-    for trigger in AGENT_MAP:
-        if trigger in user_msg_lower:
-            chosen_trigger = trigger
-            break
+    msg_lower = message.lower()
+    for trigger, func in AGENT_MAP.items():
+        if trigger in msg_lower:
+            response = await run_agent(func, {"message": message})
+            return {
+                "response": response,
+                "agent": trigger
+            }
 
-    # Step 3: Execute agent
-    agent_func = AGENT_MAP.get(chosen_trigger, DEFAULT_AGENT)
-    response_text = agent_func(user_msg)
-    resolved_agent = chosen_trigger if chosen_trigger else "default"
+    response = await run_agent(DEFAULT_AGENT, {"message": message})
+    return {
+        "response": response,
+        "agent": "default"
+    }
+
+# -----------------------------
+# Guided Agentic Mode Endpoints
+# -----------------------------
+
+@app.get("/templates")
+async def get_templates():
+    return [
+        {
+            "id": t["id"],
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["parameters"]
+        }
+        for t in TEMPLATES
+    ]
+
+@app.post("/templates/execute")
+async def execute_template(request: TemplateExecutionRequest):
+    template = next((t for t in TEMPLATES if t["id"] == request.template_id), None)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    results = await asyncio.gather(
+        *(run_agent(agent, request.params) for agent in template["agents"])
+    )
 
     return {
-        "response": response_text,
-        "agent": resolved_agent
+        "template": template["name"],
+        "parameters": request.params,
+        "results": results
     }
+
+# -----------------------------
+# Utility: Run agent safely
+# -----------------------------
+
+async def run_agent(agent_func, params: dict):
+    if asyncio.iscoroutinefunction(agent_func):
+        return await agent_func(params)
+    else:
+        return agent_func(params)
